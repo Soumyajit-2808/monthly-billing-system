@@ -1,6 +1,7 @@
 const express = require("express");
 const healthRouter = require("./routes/health.routes");
 const dbRouter = require("./routes/db.routes");
+const usersRouter = require("./routes/users.routes");
 
 const app = express();
 
@@ -13,5 +14,7 @@ app.get("/", (req, res) => {
 app.use("/api/health", healthRouter);
 
 app.use("/api/db", dbRouter);
+
+app.use("/api/users", usersRouter);
 
 module.exports = app;
