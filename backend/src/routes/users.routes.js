@@ -3,6 +3,7 @@ const bcrypt = require("bcrypt");
 const pool = require("../../db");
 const { generateOtp } = require("../utils/otp");
 const { sendVerificationOtp } = require("../services/email.service");
+const { generateToken } = require("../utils/jwt");
 
 const router = express.Router();
 
@@ -62,6 +63,74 @@ router.post("/register", async (req, res) => {
 		res.status(500).json({
 			status: "error",
 			message: "Registration failed",
+		});
+	}
+});
+
+router.post("/login", async (req, res) => {
+	const { email, password } = req.body;
+
+	if (!email || !password) {
+		return res.status(400).json({
+			status: "error",
+			message: "Email and password are required",
+		});
+	}
+
+	try {
+		const result = await pool.query(
+			`SELECT id, name, email, password_hash, email_verified
+             FROM users
+             WHERE email = $1`,
+			[email.trim().toLowerCase()],
+		);
+
+		if (result.rows.length === 0) {
+			return res.status(401).json({
+				status: "error",
+				message: "Invalid email or password",
+			});
+		}
+
+		const user = result.rows[0];
+
+		if (!user.email_verified) {
+			return res.status(403).json({
+				status: "error",
+				message: "Please verify your email before logging in",
+			});
+		}
+
+		const passwordMatches = await bcrypt.compare(
+			password,
+			user.password_hash,
+		);
+
+		if (!passwordMatches) {
+			return res.status(401).json({
+				status: "error",
+				message: "Invalid email or password",
+			});
+		}
+
+		const token = generateToken(user);
+
+		return res.json({
+			status: "ok",
+			message: "Login successful",
+			token,
+			user: {
+				id: user.id,
+				name: user.name,
+				email: user.email,
+			},
+		});
+	} catch (error) {
+		console.error("Login failed:", error.message);
+
+		return res.status(500).json({
+			status: "error",
+			message: "Login failed",
 		});
 	}
 });
@@ -208,17 +277,17 @@ router.post("/resend-verification", async (req, res) => {
 		const otpHash = await bcrypt.hash(otp, 10);
 		const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
+		await sendVerificationOtp(email.trim().toLowerCase(), otp);
+
 		await pool.query(
 			`UPDATE users
-             SET
-                verification_otp_hash = $1,
-                verification_otp_expires_at = $2,
-                verification_otp_attempts = 0
-             WHERE id = $3`,
+     SET
+        verification_otp_hash = $1,
+        verification_otp_expires_at = $2,
+        verification_otp_attempts = 0
+     WHERE id = $3`,
 			[otpHash, otpExpiresAt, user.id],
 		);
-
-		await sendVerificationOtp(email.trim().toLowerCase(), otp);
 
 		return res.json({
 			status: "ok",
