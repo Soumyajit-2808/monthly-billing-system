@@ -4,6 +4,7 @@ const dbRouter = require("./routes/db.routes");
 const usersRouter = require("./routes/users.routes");
 const monthsRouter = require("./routes/months.routes");
 const dailyRecordsRouter = require("./routes/daily-records.routes");
+const billingRouter = require("./routes/billing.routes");
 
 const app = express();
 
@@ -22,5 +23,7 @@ app.use("/api/users", usersRouter);
 app.use("/api/months", monthsRouter);
 
 app.use("/api/months/:monthId/daily-records", dailyRecordsRouter);
+
+app.use("/api/months/:monthId/summary", billingRouter);
 
 module.exports = app;

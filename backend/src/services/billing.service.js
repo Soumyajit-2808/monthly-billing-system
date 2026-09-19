@@ -1,3 +1,36 @@
+const pool = require("../../db");
+
+async function getForm2Rate(category, rateStatus, scheduleGroup) {
+	const result = await pool.query(
+		`SELECT
+            category,
+            rate_status,
+            mother_rate,
+            child_rate
+         FROM form_2_rates
+         WHERE category = $1
+           AND rate_status = $2
+           AND schedule_id = (
+               SELECT id
+               FROM schedules
+               WHERE name = $3
+           )`,
+		[category, rateStatus, scheduleGroup],
+	);
+
+	if (result.rows.length === 0) {
+		throw new Error(
+			`Form 2 rate not found for ${category}, ${rateStatus}, ${scheduleGroup}`,
+		);
+	}
+
+	return result.rows[0];
+}
+
+function roundToTwo(value) {
+	return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
 function calculateTotalPeople(record) {
 	return (
 		record.pregnant_mothers +
@@ -57,6 +90,24 @@ function isGroup2Day(date, status) {
 	}
 
 	return false;
+}
+
+function getScheduleGroup(date, status) {
+	if (status !== "WORKING") {
+		return null;
+	}
+
+	const weekday = getWeekday(date);
+
+	if ([1, 3, 5].includes(weekday)) {
+		return "GROUP_1";
+	}
+
+	if ([0, 2, 4, 6].includes(weekday)) {
+		return "GROUP_2";
+	}
+
+	return null;
 }
 
 function calculateDalUsage(record) {
@@ -183,6 +234,101 @@ function calculateForm1MonthlySummary(openingStock, records) {
 	};
 }
 
+async function calculateForm2Commodity(
+	record,
+	category,
+	rateStatus = "CURRENT",
+) {
+	const scheduleGroup = getScheduleGroup(record.date, record.status);
+
+	if (!scheduleGroup) {
+		return 0;
+	}
+
+	const rate = await getForm2Rate(category, rateStatus, scheduleGroup);
+
+	const { mothers, children } = calculateHeadcountGroups(record);
+
+	return roundToTwo(
+		mothers * Number(rate.mother_rate) + children * Number(rate.child_rate),
+	);
+}
+
+async function calculateForm2DailySummary(record, rateStatus = "CURRENT") {
+	const scheduleGroup = getScheduleGroup(record.date, record.status);
+
+	if (!scheduleGroup) {
+		return {
+			schedule: null,
+			vegetables: 0,
+			potato: 0,
+			egg: 0,
+			chatu: 0,
+			total: 0,
+		};
+	}
+
+	let vegetables = 0;
+	let potato = 0;
+	let egg = 0;
+	let chatu = 0;
+
+	if (scheduleGroup === "GROUP_2") {
+		vegetables = await calculateForm2Commodity(
+			record,
+			"VEGETABLE",
+			rateStatus,
+		);
+	}
+
+	if (scheduleGroup === "GROUP_1" || scheduleGroup === "GROUP_2") {
+		potato = await calculateForm2Commodity(record, "POTATO", rateStatus);
+
+		egg = await calculateForm2Commodity(record, "EGG", rateStatus);
+	}
+
+	if (scheduleGroup === "GROUP_1") {
+		chatu = await calculateForm2Commodity(record, "CHATU", rateStatus);
+	}
+
+	return {
+		schedule: scheduleGroup,
+		vegetables,
+		potato,
+		egg,
+		chatu,
+		total: vegetables + potato + egg + chatu,
+	};
+}
+
+async function calculateMonthlyForm2Summary(records, rateStatus = "CURRENT") {
+	const summary = {
+		vegetables: 0,
+		potato: 0,
+		egg: 0,
+		chatu: 0,
+		total: 0,
+	};
+
+	for (const record of records) {
+		const daily = await calculateForm2DailySummary(record, rateStatus);
+
+		summary.vegetables += daily.vegetables;
+		summary.potato += daily.potato;
+		summary.egg += daily.egg;
+		summary.chatu += daily.chatu;
+		summary.total += daily.total;
+	}
+
+	summary.vegetables = roundToTwo(summary.vegetables);
+	summary.potato = roundToTwo(summary.potato);
+	summary.egg = roundToTwo(summary.egg);
+	summary.chatu = roundToTwo(summary.chatu);
+	summary.total = roundToTwo(summary.total);
+
+	return summary;
+}
+
 module.exports = {
 	calculateTotalPeople,
 	calculateHeadcountGroups,
@@ -200,4 +346,9 @@ module.exports = {
 	calculateMonthlyOilRemaining,
 	calculateMonthlySaltRemaining,
 	calculateForm1MonthlySummary,
+	getScheduleGroup,
+	getForm2Rate,
+	calculateForm2Commodity,
+	calculateForm2DailySummary,
+	calculateMonthlyForm2Summary,
 };
